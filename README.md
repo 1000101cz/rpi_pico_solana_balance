@@ -12,4 +12,6 @@ Python script for monitoring balance of selected Solana wallet and its current m
 
 Every 15 minutes values are fetched and plot is updated with the latest price. Connection to Wi-Fi is required.
 
+Basic control of E-ink has been taken from [this](https://github.com/waveshareteam/Pico_ePaper_Code) [Waveshare](https://github.com/waveshareteam) repository.
+
 ![img.png](images/img2.png)
