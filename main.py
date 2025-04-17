@@ -68,6 +68,8 @@ TIMEZONE_OFFSET = 2 * 3600  # Berlin (UTC+2)
 
 
 def connect():
+    assert ssid != "<<Your_WiFi_SSID>>", "You need to set SSID!"
+    assert password != "<<Your_WiFi_Password>>", "You need to set Wi-Fi password!"
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if not wlan.isconnected():
@@ -83,39 +85,69 @@ def connect():
     print("Connected, IP address:", wlan.ifconfig()[0])
 
 
+def repeat_connect(_epd):
+    fail_counter = 1
+    wait_time = 10000
+    moduler = 10
+    while True:
+        try:
+            connect()
+            break
+        except Exception as e:
+            print(e)
+            if fail_counter % moduler == 0:
+                moduler = moduler * 10
+                wait_time = wait_time * 2
+
+            lines = ["Connection to Wi-Fi failed!", f"Repeating in {wait_time // 1000}s...", "-"*36, "", f"Attempts: {fail_counter}"]
+            if isinstance(e, AssertionError):
+                lines.insert(1, str(e))
+            _epd.show_error_message(lines)
+            fail_counter += 1
+            epd.delay_ms(wait_time)
+
+
 def get_solana_price():
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies={fiat_currency.lower()}"
-    response = urequests.get(url)
-    data = response.json()
-    response.close()
-    price = data["solana"][fiat_currency.lower()]
-    print("Solana price in EUR:", price)
-    return price
+    try:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies={fiat_currency.lower()}"
+        response = urequests.get(url)
+        data = response.json()
+        response.close()
+        price = data["solana"][fiat_currency.lower()]
+        print("Solana price in EUR:", price)
+        return price
+    except Exception as e:
+        return "unknown"
 
 
 def get_solana_balance(wallet_address):
-    url = "https://api.mainnet-beta.solana.com"
-    headers = {
-        "Content-Type": "application/json"
-    }
+    try:
+        assert wallet_address != "<<Your_PubKey>>", "You need to set public key!"
+        url = "https://api.mainnet-beta.solana.com"
+        headers = {
+            "Content-Type": "application/json"
+        }
 
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getBalance",
-        "params": [wallet_address]
-    }
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBalance",
+            "params": [wallet_address]
+        }
 
-    response = urequests.post(url, headers=headers, data=ujson.dumps(payload))
-    raw = response.text
-    # print("Raw response:", raw)
-    data = response.json()
-    response.close()
+        response = urequests.post(url, headers=headers, data=ujson.dumps(payload))
+        raw = response.text
+        # print("Raw response:", raw)
+        data = response.json()
+        response.close()
 
-    lamports = data["result"]["value"]
-    sol = lamports / 1_000_000_000
-    print(f"Balance: {sol} SOL")
-    return sol
+        lamports = data["result"]["value"]
+        sol = lamports / 1_000_000_000
+        print(f"Balance: {sol} SOL")
+        return sol
+    except Exception as e:
+        print(e)
+        return "unknown"
 
 
 def get_24h_hist_price():
@@ -128,12 +160,25 @@ def get_24h_hist_price():
     return data
 
 
-def sync_time():
-    try:
-        ntptime.settime()  # Sync time via NTP
-        print("Time synced")
-    except Exception as e:
-        print("Failed to sync time:", e)
+def sync_time(_epd):
+    fail_counter = 1
+    wait_time = 5000
+    moduler = 10
+    while True:
+        try:
+            ntptime.settime()
+            break
+        except Exception as e:
+            print(e)
+            if fail_counter % moduler == 0:
+                moduler = moduler * 10
+                wait_time = wait_time * 2
+
+            lines = ["Time synchronization failed!!", f"Repeating in {wait_time // 1000}s...", "-" * 36, "",
+                     f"Attempts: {fail_counter}"]
+            _epd.show_error_message(lines)
+            fail_counter += 1
+            epd.delay_ms(wait_time)
 
 
 def format_time(t):
@@ -209,10 +254,8 @@ class EPD_2in9_Landscape(framebuf.FrameBuffer):
         self.digital_write(self.cs_pin, 1)
 
     def ReadBusy(self):
-        print("e-Paper busy")
         while (self.digital_read(self.busy_pin) == 1):  # 0: idle, 1: busy
             self.delay_ms(10)
-        print("e-Paper busy release")
 
     def TurnOnDisplay(self):
         self.send_command(0x22)  # DISPLAY_UPDATE_CONTROL_2
@@ -370,7 +413,7 @@ class EPD_2in9_Landscape(framebuf.FrameBuffer):
         self.delay_ms(2000)
         self.module_exit()
 
-    def get_graph(self, current_time):
+    def show_graph(self, current_time):
         x_start = 50
         x_end = 295
         x_diff = x_end - x_start
@@ -434,7 +477,15 @@ class EPD_2in9_Landscape(framebuf.FrameBuffer):
                 self.text(f"{diff:.2f}%", 160, 50, 0x00)
 
     def init_fetch(self):
-        data = get_24h_hist_price()
+        try:
+            data = get_24h_hist_price()
+        except Exception as e:
+            print(e)
+            lines = ["24h history fetching failed!", "Plot will not be available now"]
+            self.show_error_message(lines)
+            self.delay_ms(5000)
+            self.price_history = {}
+            return
 
         for k in data:
             timestamp = k[0]
@@ -446,6 +497,8 @@ class EPD_2in9_Landscape(framebuf.FrameBuffer):
             # print(f"{timestamp}: O:{open_price} H:{high_price} L:{low_price} C:{close_price}")
             self.price_history[key_time] = close_price
 
+        del data
+
     def fetch_data(self):
 
         self.sol_price = get_solana_price()
@@ -453,64 +506,54 @@ class EPD_2in9_Landscape(framebuf.FrameBuffer):
 
         current_time = time.localtime(time.time() + TIMEZONE_OFFSET)
 
-        self.price_history[current_time] = self.sol_price
-
-        self.Clear(0xff)
-        self.fill(0xff)
-
-        graph = self.get_graph(current_time)
+        if self.sol_price != 'unknown':
+            self.price_history[current_time] = self.sol_price
 
         self.update_display(current_time)
 
     def update_display(self, current_time):
 
+        self.Clear(0xff)
+        self.fill(0xff)
+
+        self.show_graph(current_time)
+
         formatted_time = format_time(current_time)
         self.text(f"{formatted_time}", 5, 0, 0x00)
         self.hline(0, 10, 296, 0x00)
-        self.text(f"Balance: {self.balance:.3f} SOL", 5, 15, 0x00)
-        self.text(f"SOL price: {self.sol_price:.2f} {fiat_currency}", 5, 25, 0x00)
-        worth = self.balance * self.sol_price
-        self.text(f"Wallet worth: {worth:.3f} {fiat_currency}", 5, 35, 0x00)
+        _balance = self.balance
+        if _balance != 'unknown':
+            _balance = f"{self.balance:.3f} SOL"
+        self.text(f"Balance: {_balance}", 5, 15, 0x00)
+        _price = self.sol_price
+        _worth = "unknown"
+        if _price != 'unknown':
+            _price = f"{self.sol_price:.2f} {fiat_currency}"
+            if _balance != 'unknown':
+                worth = self.balance * self.sol_price
+                _worth = f"{worth:.3f} {fiat_currency}"
+        self.text(f"SOL price: {_price}", 5, 25, 0x00)
+        self.text(f"Wallet worth: {_worth}", 5, 35, 0x00)
         self.hline(0, 45, 296, 0x00)
         self.text("                            Last 24h", 5, 50, 0x00)
         self.display(epd.buffer)
 
+    def show_error_message(self, message_lines: list[str]):
+        self.Clear(0x00)
+        self.fill(0x00)
+        self.text(15*"/" + " ERROR " + 14*"\\", 5, 5, 0xff)
+        for i, line in enumerate(message_lines):
+            self.text(line, 5, 10 * i + 25, 0xff)
+        self.display(epd.buffer)
+
 
 if __name__ == '__main__':
-    connect()
-
-    sync_time()
-
     epd = EPD_2in9_Landscape()
+
+    repeat_connect(epd)
+    sync_time(epd)
+
     epd.init_fetch()
     while True:
         epd.fetch_data()
         epd.delay_min(15)
-
-    # epd.Clear(0xff)
-
-    # epd.fill(0xff)
-    # epd.text("Solana", 5, 10, 0x00)
-    # epd.text(f"{pubkey[:36]}", 5, 20, 0x00)
-    # epd.text(f"{pubkey[36:]}", 5, 30, 0x00)
-    # epd.display(epd.buffer)
-    # epd.delay_ms(2000)
-
-    # epd.vline(10, 40, 60, 0x00)
-    # epd.vline(120, 40, 60, 0x00)
-    # epd.hline(10, 40, 110, 0x00)
-    # epd.hline(10, 100, 110, 0x00)
-    # epd.line(10, 40, 120, 100, 0x00)
-    # epd.line(120, 40, 10, 100, 0x00)
-    # epd.display(epd.buffer)
-    # epd.delay_ms(2000)
-
-    # epd.rect(150, 5, 50, 55, 0x00)
-    # epd.fill_rect(150, 65, 50, 115, 0x00)
-    # epd.display_Base(epd.buffer)
-    # epd.delay_ms(2000)
-
-    # for i in range(0, 10):
-    #     epd.fill_rect(220, 60, 10, 10, 0xff)
-    #     epd.text(str(i), 222, 62, 0x00)
-    #     epd.display_Partial(epd.buffer)
